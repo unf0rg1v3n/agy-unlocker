@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 import urllib.request
 from typing import List, Optional, Tuple
 
-from . import __version__, detect
+from . import __version__, detect, proxyenv
 from .envcfg import Settings, load_settings
 from .patchers import base, cli_bin, langserver
 
@@ -58,9 +60,21 @@ def build_parser() -> argparse.ArgumentParser:
     common(restore)
     restore.add_argument("-y", "--yes", action="store_true", help="не спрашивать подтверждения")
 
-    doctor = sub.add_parser("doctor", help="диагностика: компоненты, патчи, сетевой выход")
+    doctor = sub.add_parser("doctor", help="диагностика: компоненты, патчи, прокси, сетевой выход")
     common(doctor)
     doctor.add_argument("--no-net", action="store_true", help="не проверять внешний IP")
+
+    run = sub.add_parser(
+        "run",
+        help="запустить команду с прокси-переменными окружения (например: run -- agy -p \"привет\")",
+    )
+    run.add_argument("argv", nargs=argparse.REMAINDER, help="команда после --")
+
+    proxy = sub.add_parser("proxy", help="прокси для agy: agy игнорирует системный прокси Windows")
+    proxy_sub = proxy.add_subparsers(dest="proxy_command")
+    proxy_sub.add_parser("status", help="показать все уровни прокси и вердикт")
+    proxy_sub.add_parser("install", help="прописать прокси в окружение пользователя (постоянно)")
+    proxy_sub.add_parser("remove", help="убрать прокси из окружения пользователя")
     return parser
 
 
@@ -88,6 +102,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "status": cmd_status,
         "restore": cmd_restore,
         "doctor": cmd_doctor,
+        "run": cmd_run,
+        "proxy": cmd_proxy,
     }
     return handlers[command](args, settings, shell)
 
@@ -258,8 +274,6 @@ def cmd_restore(args: argparse.Namespace, settings: Settings, shell: str) -> int
         print("    [OK] восстановлено из резервной копии")
     if not found_any:
         return 2
-    if args.component == "all" or True:
-        pass
     print()
     print("Примечание: сторонние шимы (если были) этой командой не удаляются.")
     return rc
@@ -268,6 +282,8 @@ def cmd_restore(args: argparse.Namespace, settings: Settings, shell: str) -> int
 def cmd_doctor(args: argparse.Namespace, settings: Settings, shell: str) -> int:
     print(f"agy-unlocker {__version__}")
     rc = cmd_status(args, settings, shell)
+    print("\n=== Прокси ===")
+    _print_proxy_state(shell)
     print("\n=== Сеть ===")
     if getattr(args, "no_net", False) or not settings.net_check:
         print("    проверка IP отключена (--no-net или AGY_UNLOCKER_NO_NET)")
@@ -279,6 +295,85 @@ def cmd_doctor(args: argparse.Namespace, settings: Settings, shell: str) -> int:
         else:
             print("    [??] не удалось определить внешний IP (сеть недоступна?)")
     return rc
+
+
+def _print_proxy_state(shell: str) -> None:
+    env_proxy = proxyenv.current_env_proxy()
+    sys_proxy = proxyenv.read_system_proxy()
+    user_proxy = proxyenv.user_env_proxy()
+    print(f"    окружение процесса: {env_proxy or 'не задано'}")
+    if os.name == "nt":
+        print(f"    системный (WinINet): {sys_proxy or 'не задан'}")
+        print(f"    окружение пользователя: {user_proxy or 'не задано'}")
+    verdict_needed = sys_proxy and not (env_proxy or user_proxy)
+    if os.name == "nt" and sys_proxy and not user_proxy:
+        print("    [!] agy игнорирует системный прокси и пойдёт напрямую -> 400 User location")
+        print(f"        починка: {shell_command(shell, 'proxy install')}  (и перезапустите терминал/IDE)")
+        print(f"        разовый запуск: {shell_command(shell, 'run -- agy ...')}")
+
+
+def cmd_run(args: argparse.Namespace, settings: Settings, shell: str) -> int:
+    argv = list(args.argv)
+    if argv and argv[0] == "--":
+        argv = argv[1:]
+    if not argv:
+        print("укажите команду после --, например:")
+        print(f"    {shell_command(shell, 'run -- agy -p \"привет\"')}")
+        return 2
+    env = os.environ.copy()
+    applied = proxyenv.current_env_proxy(env)
+    if applied:
+        print(f"прокси уже задан в окружении: {applied}")
+    else:
+        source = settings.proxy or proxyenv.read_system_proxy()
+        if source:
+            applied = proxyenv.normalize_proxy_url(source)
+            for key in proxyenv.ENV_PROXY_KEYS:
+                env[key] = applied
+            print(f"прокси для дочернего процесса: {applied}")
+        else:
+            print("прокси не обнаружен — запускаем как есть (VPN в TUN-режиме или прямой выход)")
+    try:
+        result = subprocess.run(argv, env=env)
+    except OSError as exc:
+        print(f"не удалось запустить: {exc}")
+        return 1
+    return result.returncode
+
+
+def cmd_proxy(args: argparse.Namespace, settings: Settings, shell: str) -> int:
+    sub = getattr(args, "proxy_command", None) or "status"
+    if sub == "status":
+        _print_proxy_state(shell)
+        return 0
+    if sub == "install":
+        source = settings.proxy or proxyenv.current_env_proxy() or proxyenv.read_system_proxy()
+        if not source:
+            print("[ERR] прокси не обнаружен ни в окружении, ни в системных настройках.")
+            print("      Задайте его явно: AGY_PROXY=http://127.0.0.1:ПОРТ в .env")
+            return 1
+        if os.name != "nt":
+            print("добавьте в ~/.bashrc / ~/.zshrc строки:")
+            print(f'    export HTTPS_PROXY="{source}"')
+            print(f'    export HTTP_PROXY="{source}"')
+            print("и перезапустите shell.")
+            return 0
+        proxyenv.install_user_proxy(source)
+        print(f"[OK] прокси {proxyenv.normalize_proxy_url(source)} записан в окружение пользователя.")
+        print("     Новые процессы (включая IDE и language_server) подхватят его сразу;")
+        print("     уже открытые терминалы/IDE — перезапустите.")
+        return 0
+    if sub == "remove":
+        if os.name != "nt":
+            print("удалите строки export HTTPS_PROXY/HTTP_PROXY из shell-конфига.")
+            return 0
+        deleted = proxyenv.remove_user_proxy()
+        if deleted:
+            print(f"[OK] удалено переменных: {deleted}. Перезапустите терминалы/IDE.")
+        else:
+            print("прокси-переменных в окружении пользователя не было.")
+        return 0
+    return 2
 
 
 def _egress_info(timeout: int = 6) -> Optional[str]:

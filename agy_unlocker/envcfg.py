@@ -12,6 +12,7 @@ from typing import Optional
 class Settings:
     cli_path: Optional[str] = None
     langserver_path: Optional[str] = None
+    proxy: Optional[str] = None
     assume_yes: bool = False
     net_check: bool = True
 
@@ -50,6 +51,7 @@ def load_settings() -> Settings:
     return Settings(
         cli_path=get("AGY_CLI_PATH"),
         langserver_path=get("AGY_LANGSERVER_PATH"),
+        proxy=get("AGY_PROXY"),
         assume_yes=_truthy(get("AGY_UNLOCKER_ASSUME_YES")),
         net_check=not _truthy(get("AGY_UNLOCKER_NO_NET")),
     )

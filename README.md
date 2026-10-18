@@ -74,6 +74,10 @@ python -m venv .venv          # Windows: py -3 -m venv .venv
 | `status` | Состояние: пути, версии, слои патча, бэкапы (только чтение) |
 | `restore` | Откат к оригиналам из резервных копий |
 | `doctor` | Диагностика + проверка страны внешнего IP |
+| `run -- <команда>` | Запустить команду с прокси-переменными: `run -- agy -p "привет"` |
+| `proxy status` | Показать прокси на всех уровнях и вердикт |
+| `proxy install` | Прописать прокси в окружение пользователя (постоянно) |
+| `proxy remove` | Убрать прокси из окружения пользователя |
 | `--component cli\|ui` | Обрабатывать только один компонент |
 
 Утилита сама определяет, что установлено, ищет бинарники в стандартных путях
@@ -87,6 +91,47 @@ python -m venv .venv          # Windows: py -3 -m venv .venv
 его шим распознаётся автоматически: патч применяется к настоящему бинарнику (`.real`),
 а шим аккуратно убирается (паркуется как `agy.exe.xbox-shim.bak`), чтобы команда `agy`
 снова запускала рабочий оригинал. Полностью обратимо.
+
+## Прокси: почему `agy` может отвечать 400 даже «с VPN»
+
+`agy` и `language_server` — Go-бинарники: они **игнорируют системный прокси Windows**
+(настройку WinINet, которую использует браузер) и читают только переменные окружения
+`HTTP(S)_PROXY`. Если VPN работает через локальный прокси (xray/v2ray/clash на
+`127.0.0.1:порт`), браузер ходит через VPN, а agy — напрямую с реального IP и получает:
+
+```
+FAILED_PRECONDITION (code 400): User location is not supported for the API use.
+```
+
+Утилита решает это на выбор:
+
+```bash
+# Вариант 1 (рекомендуется, Windows): прописать прокси в окружение пользователя —
+# подхватят все новые процессы, включая IDE и её language_server:
+./agy-unlock proxy install        # cmd: agy-unlock.cmd proxy install
+# затем перезапустите терминал и IDE
+
+# Вариант 2: разовый запуск с автоподстановкой системного прокси:
+./agy-unlock run -- agy -p "привет"
+
+# Вариант 3: вручную (любая ОС):
+export HTTPS_PROXY=http://127.0.0.1:10809   # Windows: setx HTTPS_PROXY http://127.0.0.1:10809
+```
+
+Адрес берётся из системных настроек автоматически; если авто-детект не подошёл —
+задайте `AGY_PROXY` в `.env`. `proxy status` показывает все уровни и вердикт;
+`proxy remove` откатывает изменения. Проверка всей цепочки — `./agy-unlock doctor`
+(покажет и прокси, и страну внешнего IP).
+
+## Решение проблем
+
+| Симптом | Причина | Действие |
+|---|---|---|
+| `400 User location is not supported for the API use` | agy игнорирует системный прокси и ходит с реального IP | `proxy install` (и перезапустить терминал/IDE) или `run -- agy ...` |
+| `Eligibility check failed: ... not available in your location` | патч затёрт обновлением agy/IDE | повторить `patch` |
+| `Eligibility check failed: ... Not Allowed` (после стороннего разблокировщика) | чужой шим режет трафик | прогнать `patch` — он распознает и уберёт шим |
+| `proxyconnect tcp: dial tcp 127.0.0.1:XXXXX: connection refused` | VPN-клиент выключен или прокси на другом порту | включить VPN; при необходимости задать `AGY_PROXY` в `.env` |
+| неясно, что сломано | — | `doctor` — покажет патчи, прокси и страну выхода |
 
 ## Обновления Antigravity
 
@@ -118,8 +163,12 @@ and the IDE (`language_server`). It patches local binaries (eligibility branch
 neutralization + consistent `ineligible`→`inexigible` literal rename for the CLI;
 forced `hasValidAuth=true` for the IDE), with byte-exact SHA-256-verified backups and
 one-command restore. Stdlib-only Python 3.9+, works from bash/cmd/PowerShell via the
-included wrappers. Re-run `patch` after each Antigravity update. Use at your own risk;
-not affiliated with Google.
+included wrappers. Re-run `patch` after each Antigravity update.
+
+Note: Go binaries ignore the Windows system proxy — if your VPN is a local proxy
+(xray/v2ray/clash), run `proxy install` once (or use `run -- agy ...`), restart your
+terminal/IDE, otherwise model calls fail with `400 User location is not supported`.
+Use at your own risk; not affiliated with Google.
 
 ## License
 

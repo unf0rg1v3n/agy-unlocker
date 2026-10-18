@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agy_unlocker import detect
+from agy_unlocker import detect, proxyenv
 from agy_unlocker.envcfg import _parse_dotenv
 from agy_unlocker.patchers import base, cli_bin, langserver
 
@@ -153,6 +153,18 @@ class DetectTests(unittest.TestCase):
     def test_candidates_return_list(self):
         self.assertIsInstance(detect.cli_candidates(), list)
         self.assertIsInstance(detect.langserver_candidates(), list)
+
+
+class ProxyEnvTests(unittest.TestCase):
+    def test_normalize(self):
+        self.assertEqual(proxyenv.normalize_proxy_url("127.0.0.1:10809"), "http://127.0.0.1:10809")
+        self.assertEqual(proxyenv.normalize_proxy_url("socks5://127.0.0.1:10808"), "socks5://127.0.0.1:10808")
+        self.assertEqual(proxyenv.normalize_proxy_url("   "), "")
+
+    def test_current_env_proxy(self):
+        self.assertEqual(proxyenv.current_env_proxy({"HTTPS_PROXY": "http://x:1"}), "http://x:1")
+        self.assertEqual(proxyenv.current_env_proxy({"http_proxy": "http://y:2"}), "http://y:2")
+        self.assertIsNone(proxyenv.current_env_proxy({}))
 
 
 class NormalizeShimTests(unittest.TestCase):
