@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agy-unlocker"
+version = "1.0.0"
+description = "Утилита для снятия региональной блокировки Google Antigravity (CLI agy и IDE)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "agy-unlocker contributors" }]
+keywords = ["antigravity", "google", "region-lock", "cli", "ide"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Utilities",
+]
+
+[project.scripts]
+agy-unlock = "agy_unlocker.cli:main"
+
+[tool.setuptools]
+packages = ["agy_unlocker", "agy_unlocker.patchers"]

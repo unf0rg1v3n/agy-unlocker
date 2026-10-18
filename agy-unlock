@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# agy-unlocker: универсальный запускатор (bash / Git Bash / WSL / Linux / macOS).
+# Определяет интерпретатор сам и передаёт управление Python-ядру.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+
+pick_python() {
+    # Локальный venv имеет приоритет над системным интерпретатором.
+    if [ -x "$SCRIPT_DIR/.venv/Scripts/python.exe" ]; then
+        printf '%s\n' "$SCRIPT_DIR/.venv/Scripts/python.exe"
+        return 0
+    fi
+    if [ -x "$SCRIPT_DIR/.venv/bin/python" ]; then
+        printf '%s\n' "$SCRIPT_DIR/.venv/bin/python"
+        return 0
+    fi
+    local cmd
+    for cmd in python3 python py; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            printf '%s\n' "$cmd"
+            return 0
+        fi
+    done
+    return 1
+}
+
+if ! PYTHON_BIN="$(pick_python)"; then
+    echo "agy-unlock: не найден Python 3.9+. Установите: https://www.python.org/downloads/" >&2
+    exit 1
+fi
+
+export PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PYTHON_BIN" -m agy_unlocker --shell=bash "$@"

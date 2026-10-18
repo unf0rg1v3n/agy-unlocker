@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Виртуальные окружения
+.venv/
+venv/
+
+# Локальная конфигурация
+.env
+
+# Сборка
+build/
+dist/
+
+# ОС
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Резервные копии патчера (создаются рядом с патчимыми бинарниками,
+# сюда попадать не должны, но на всякий случай)
+*.agyunlock.bak
+*.agyunlock.json
