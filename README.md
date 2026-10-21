@@ -46,6 +46,17 @@
 2. Или **отключите заглушки**: Параметры → Приложения → Дополнительные параметры приложений →
    Псевдонимы выполнения приложений → выключите «python» и «py» — и установите Python (способ 1).
 
+**Python вроде стоит, но работает только команда `py` (а `python` — нет)?**
+Выполните в папке утилиты:
+
+```
+py -3 -m venv .venv
+```
+
+Обёртка сама подхватит этот `.venv`. Более того: если другого Python в системе нет,
+обёртка собирает `.venv` через `py` **автоматически** при первом запуске —
+вручную делать это не обязательно.
+
 ## ❗ PowerShell пишет «execution of scripts is disabled on this system»
 
 Используйте `agy-unlock.cmd` — она одинаково работает и в cmd, и в PowerShell.
@@ -87,6 +98,7 @@
 | Симптом | Причина | Действие |
 |---|---|---|
 | при запуске любой команды выводит «Python» / «Python was not found…» | в системе нет Python — сработала заглушка Microsoft Store | установить Python / отключить псевдонимы (инструкция выше) |
+| `python` не запускается, а работает только `py` | Python установлен, но не добавлен в PATH | ничего страшного: `py -3 -m venv .venv` в папке утилиты — обёртка подхватит `.venv` (собирает его сама автоматически) |
 | `400 User location is not supported for the API use` | agy игнорирует системный прокси и ходит с реального IP | `proxy install` (и перезапустить терминал/IDE) или `run -- agy ...` |
 | `Eligibility check failed: ... not available in your location` | патч затёрт обновлением agy/IDE | повторить `patch` |
 | `Eligibility check failed: ... Not Allowed` (после стороннего разблокировщика) | чужой шим режет трафик | прогнать `patch` — он распознает и уберёт шим |
@@ -198,6 +210,8 @@ automatically (or run `proxy install` manually / use `run -- agy ...`), restart 
 terminal/IDE, otherwise model calls fail with `400 User location is not supported`.
 If running the tool prints just "Python" / "Python was not found", Python isn't
 installed — disable the Microsoft Store aliases or install Python from python.org.
+If only the `py` launcher works (no `python` in PATH), run `py -3 -m venv .venv` in the
+tool folder — the wrappers pick up `.venv` automatically (and try to build it for you).
 Use at your own risk; not affiliated with Google.
 
 ## License

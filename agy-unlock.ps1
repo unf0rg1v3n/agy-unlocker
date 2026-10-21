@@ -42,17 +42,37 @@ if (-not $python) {
     }
 }
 
+# Последний шанс: системы без "python" в PATH, но с лаунчером py.
+# Собираем локальный .venv (зависимостей у утилиты нет — pip не нужен).
+if (-not $python) {
+    $pyCmd = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyCmd) {
+        Write-Host 'agy-unlock: не найден Python в PATH, но есть py — собираю локальный .venv (одноразово)...'
+        & $pyCmd.Source -3 -m venv (Join-Path $dir '.venv') *> $null
+        $venvPython = Join-Path $dir '.venv\Scripts\python.exe'
+        if ((Test-Path $venvPython -PathType Leaf) -and (Test-AgyPython $venvPython)) {
+            $python = $venvPython
+        } else {
+            Write-Host 'agy-unlock: не удалось собрать .venv через py.'
+        }
+    }
+}
+
 if (-not $python) {
     Write-Host 'agy-unlock: не найден настоящий Python 3.9+.' -ForegroundColor Red
     Write-Host ''
     Write-Host 'Скорее всего, в Windows 11 команда "python" — это заглушка Microsoft Store,'
-    Write-Host 'а сам Python не установлен. Любой из двух способов исправляет проблему:'
+    Write-Host 'а сам Python не установлен. Любой из способов исправляет проблему:'
     Write-Host ''
     Write-Host '  1. Установите Python: https://www.python.org/downloads/'
     Write-Host '     На первом экране установщика включите "Add python.exe to PATH".'
     Write-Host '  2. Или отключите заглушки: Параметры - Приложения - Дополнительные'
     Write-Host '     параметры приложений - Псевдонимы выполнения приложений -'
     Write-Host '     выключите "python" и "py". Затем установите Python (способ 1).'
+    Write-Host ''
+    Write-Host 'Если Python уже стоит, но работает только команда "py":'
+    Write-Host '    py -3 -m venv .venv'
+    Write-Host '(обёртка подхватывает .venv сама и пытается собрать его автоматически).'
     Write-Host ''
     Write-Host 'После установки откройте НОВОЕ окно терминала и повторите команду.'
     exit 1

@@ -65,6 +65,24 @@ if not defined PYTHON_BIN (
     )
 )
 
+rem Последний шанс: системы без "python" в PATH, но с лаунчером py.
+rem Собираем локальный .venv (зависимостей у утилиты нет — pip не нужен).
+if not defined PYTHON_BIN (
+    where py >nul 2>nul
+    if not errorlevel 1 (
+        echo agy-unlock: не найден Python в PATH, но есть py — собираю локальный .venv ^(одноразово^)...
+        py -3 -m venv "%DIR%.venv" >nul 2>nul
+        if not errorlevel 1 (
+            "%DIR%.venv\Scripts\python.exe" -c "%PROBE%" >nul 2>nul
+            if not errorlevel 1 (
+                set "PYTHON_BIN=%DIR%.venv\Scripts\python.exe"
+                goto run
+            )
+        )
+        echo agy-unlock: не удалось собрать .venv через py.
+    )
+)
+
 if not defined PYTHON_BIN goto no_python
 
 :run
@@ -75,13 +93,17 @@ exit /b %errorlevel%
 echo agy-unlock: не найден настоящий Python 3.9+.
 echo.
 echo Скорее всего, в Windows 11 команда "python" — это заглушка Microsoft Store,
-echo а сам Python не установлен. Любой из двух способов исправляет проблему:
+echo а сам Python не установлен. Любой из способов исправляет проблему:
 echo.
 echo   1. Установите Python: https://www.python.org/downloads/
 echo      На первом экране установщика включите "Add python.exe to PATH".
 echo   2. Или отключите заглушки: Параметры - Приложения - Дополнительные
 echo      параметры приложений - Псевдонимы выполнения приложений -
 echo      выключите "python" и "py". Затем установите Python (способ 1).
+echo.
+echo Если Python уже стоит, но команда "python" не работает, а есть только "py":
+echo     py -3 -m venv .venv
+echo (обёртка подхватывает .venv сама; в её сборке она пытается это сделать).
 echo.
 echo После установки откройте НОВОЕ окно терминала и повторите команду.
 exit /b 1
