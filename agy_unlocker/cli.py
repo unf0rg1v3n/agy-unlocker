@@ -93,6 +93,13 @@ def _force_utf8_stdio() -> None:
 
 def main(argv: Optional[List[str]] = None) -> int:
     _force_utf8_stdio()
+    if sys.version_info < (3, 9):
+        # Защита для точки входа из pip (agy_unlocker.cli:main): обёртки
+        # фильтруют интерпретаторы сами, но сюда можно попасть и напрямую.
+        version = "%d.%d.%d" % sys.version_info[:3]
+        print(f"agy-unlock: требуется Python 3.9+, запущен Python {version}.", file=sys.stderr)
+        print("Скачайте свежую версию: https://www.python.org/downloads/", file=sys.stderr)
+        return 1
     args = build_parser().parse_args(argv)
     settings = load_settings()
     shell = args.shell or detect.guess_shell()

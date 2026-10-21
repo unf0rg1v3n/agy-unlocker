@@ -5,28 +5,60 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
+python_ok() {
+    # Годен только настоящий интерпретатор Python 3.9+: выполняем пробный код.
+    # Отсекает заглушки-шимы, битые venv и слишком старые версии Python.
+    "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1
+}
+
+path_hits() {
+    # Все исполняемые файлы с именем $1 в PATH (не только первое совпадение),
+    # включая Windows-расширения (.exe/.cmd/...) для Git Bash.
+    local dir name
+    local old_ifs=$IFS
+    IFS=:
+    for dir in $PATH; do
+        IFS=$old_ifs
+        [ -n "$dir" ] || dir=.
+        for name in "$1" "$1.exe" "$1.cmd" "$1.bat" "$1.com"; do
+            if [ -f "$dir/$name" ] && [ -x "$dir/$name" ]; then
+                printf '%s\n' "$dir/$name"
+            fi
+        done
+        IFS=:
+    done
+    IFS=$old_ifs
+}
+
 pick_python() {
     # Локальный venv имеет приоритет над системным интерпретатором.
-    if [ -x "$SCRIPT_DIR/.venv/Scripts/python.exe" ]; then
-        printf '%s\n' "$SCRIPT_DIR/.venv/Scripts/python.exe"
-        return 0
-    fi
-    if [ -x "$SCRIPT_DIR/.venv/bin/python" ]; then
-        printf '%s\n' "$SCRIPT_DIR/.venv/bin/python"
-        return 0
-    fi
-    local cmd
-    for cmd in python3 python py; do
-        if command -v "$cmd" >/dev/null 2>&1; then
-            printf '%s\n' "$cmd"
+    local candidate
+    for candidate in "$SCRIPT_DIR/.venv/Scripts/python.exe" "$SCRIPT_DIR/.venv/bin/python"; do
+        if [ -f "$candidate" ] && python_ok "$candidate"; then
+            printf '%s\n' "$candidate"
             return 0
         fi
+    done
+    local cmd hit
+    for cmd in python3 python py; do
+        while IFS= read -r hit; do
+            if python_ok "$hit"; then
+                printf '%s\n' "$hit"
+                return 0
+            fi
+        done < <(path_hits "$cmd")
     done
     return 1
 }
 
 if ! PYTHON_BIN="$(pick_python)"; then
-    echo "agy-unlock: не найден Python 3.9+. Установите: https://www.python.org/downloads/" >&2
+    {
+        echo "agy-unlock: не найден настоящий Python 3.9+."
+        echo "Установите: https://www.python.org/downloads/"
+        echo "Если Python установлен, но его нет в PATH, добавьте его в PATH"
+        echo "или создайте виртуальное окружение рядом с утилитой:"
+        echo "    python3 -m venv .venv"
+    } >&2
     exit 1
 fi
 
