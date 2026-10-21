@@ -4,8 +4,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from agy_unlocker import detect, proxyenv
+from agy_unlocker import cli, detect, proxyenv
 from agy_unlocker.envcfg import _parse_dotenv
 from agy_unlocker.patchers import base, cli_bin, langserver
 
@@ -165,6 +166,99 @@ class ProxyEnvTests(unittest.TestCase):
         self.assertEqual(proxyenv.current_env_proxy({"HTTPS_PROXY": "http://x:1"}), "http://x:1")
         self.assertEqual(proxyenv.current_env_proxy({"http_proxy": "http://y:2"}), "http://y:2")
         self.assertIsNone(proxyenv.current_env_proxy({}))
+
+
+class AutoProxyInstallTests(unittest.TestCase):
+    """Автопрокси в cmd_patch: переменные прописываются сами, только если есть
+    системный прокси и нет переменных окружения (иначе agy уйдёт напрямую
+    и ответит 400 User location is not supported)."""
+
+    SEQ_X64 = bytes.fromhex("4885c00f84aabbccdd807808000f85eeff1122")
+
+    def _no_proxy_env(self):
+        return (
+            mock.patch.object(cli.proxyenv, "current_env_proxy", return_value=None),
+            mock.patch.object(cli.proxyenv, "user_env_proxy", return_value=None),
+        )
+
+    def test_installs_when_only_system_proxy(self):
+        p_env, p_user = self._no_proxy_env()
+        with p_env, p_user, \
+                mock.patch.object(cli.os, "name", "nt"), \
+                mock.patch.object(cli.proxyenv, "read_system_proxy", return_value="127.0.0.1:10809"), \
+                mock.patch.object(cli.proxyenv, "install_user_proxy") as install:
+            cli._auto_proxy_install("bash")
+        install.assert_called_once_with("127.0.0.1:10809")
+
+    def test_skips_when_env_or_user_proxy_exists(self):
+        p_user = mock.patch.object(cli.proxyenv, "user_env_proxy", return_value=None)
+        with p_user, \
+                mock.patch.object(cli.os, "name", "nt"), \
+                mock.patch.object(cli.proxyenv, "current_env_proxy", return_value="http://x:1"), \
+                mock.patch.object(cli.proxyenv, "read_system_proxy") as read, \
+                mock.patch.object(cli.proxyenv, "install_user_proxy") as install:
+            cli._auto_proxy_install("bash")
+        install.assert_not_called()
+        read.assert_not_called()
+
+        p_env = mock.patch.object(cli.proxyenv, "current_env_proxy", return_value=None)
+        p_user2 = mock.patch.object(cli.proxyenv, "user_env_proxy", return_value="http://y:2")
+        with p_env, p_user2, \
+                mock.patch.object(cli.os, "name", "nt"), \
+                mock.patch.object(cli.proxyenv, "read_system_proxy") as read2, \
+                mock.patch.object(cli.proxyenv, "install_user_proxy") as install2:
+            cli._auto_proxy_install("bash")
+        install2.assert_not_called()
+        read2.assert_not_called()
+
+    def test_skips_without_system_proxy(self):
+        p_env, p_user = self._no_proxy_env()
+        with p_env, p_user, \
+                mock.patch.object(cli.os, "name", "nt"), \
+                mock.patch.object(cli.proxyenv, "read_system_proxy", return_value=None), \
+                mock.patch.object(cli.proxyenv, "install_user_proxy") as install:
+            cli._auto_proxy_install("bash")
+        install.assert_not_called()
+
+    def test_skips_on_posix(self):
+        with mock.patch.object(cli.os, "name", "posix"), \
+                mock.patch.object(cli.proxyenv, "install_user_proxy") as install:
+            cli._auto_proxy_install("bash")
+        install.assert_not_called()
+
+    def test_patch_triggers_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agy.exe"
+            path.write_bytes(b"\x90" * 8 + self.SEQ_X64 + b"\x90" * 8)
+            p_env, p_user = self._no_proxy_env()
+            with mock.patch.dict(os.environ, {"AGY_CLI_PATH": str(path)}), \
+                    p_env, p_user, \
+                    mock.patch.object(cli.detect, "running_processes", return_value=set()), \
+                    mock.patch.object(cli.os, "name", "nt"), \
+                    mock.patch.object(cli.proxyenv, "read_system_proxy", return_value="127.0.0.1:10809"), \
+                    mock.patch.object(cli.proxyenv, "install_user_proxy") as install:
+                rc = cli.main(["--shell", "bash", "patch", "-y", "--component", "cli"])
+            self.assertEqual(rc, 0)
+            install.assert_called_once_with("127.0.0.1:10809")
+            bak, _ = base.backup_paths(path)
+            self.assertTrue(bak.exists())
+
+    def test_dry_run_does_not_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agy.exe"
+            path.write_bytes(b"\x90" * 8 + self.SEQ_X64 + b"\x90" * 8)
+            p_env, p_user = self._no_proxy_env()
+            with mock.patch.dict(os.environ, {"AGY_CLI_PATH": str(path)}), \
+                    p_env, p_user, \
+                    mock.patch.object(cli.detect, "running_processes", return_value=set()), \
+                    mock.patch.object(cli.os, "name", "nt"), \
+                    mock.patch.object(cli.proxyenv, "read_system_proxy", return_value="127.0.0.1:10809"), \
+                    mock.patch.object(cli.proxyenv, "install_user_proxy") as install:
+                rc = cli.main(["--shell", "bash", "patch", "--dry-run", "-y", "--component", "cli"])
+            self.assertEqual(rc, 0)
+            install.assert_not_called()
+            bak, _ = base.backup_paths(path)
+            self.assertFalse(bak.exists())
 
 
 class NormalizeShimTests(unittest.TestCase):

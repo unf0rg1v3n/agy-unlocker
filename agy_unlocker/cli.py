@@ -210,6 +210,8 @@ def cmd_patch(args: argparse.Namespace, settings: Settings, shell: str) -> int:
     if not found_any:
         print("\nНичего не найдено. Установите Antigravity или укажите пути в .env (см. .env.example).")
         return 2
+    if not dry_run:
+        _auto_proxy_install(shell)
     print()
     if dry_run:
         print("Это была репетиция (--dry-run). Для реального патча запустите:")
@@ -222,6 +224,28 @@ def cmd_patch(args: argparse.Namespace, settings: Settings, shell: str) -> int:
             print("    • IDE:  запустите Antigravity как обычно")
         print(f"    • проверка состояния: {shell_command(shell, 'status')}")
     return rc
+
+
+def _auto_proxy_install(shell: str) -> None:
+    """Патч снимает клиентский региональный гейт, но трафик до Google всё равно
+    должен идти через VPN-прокси: agy и language_server игнорируют системный
+    прокси Windows и читают только переменные окружения. Поэтому, если системный
+    прокси уже настроен, а переменные не прописаны ни в окружении, ни у
+    пользователя, прописываем их сами. Обратимо: 'proxy remove'.
+    """
+    if os.name != "nt":
+        return
+    if proxyenv.current_env_proxy() or proxyenv.user_env_proxy():
+        return
+    system_proxy = proxyenv.read_system_proxy()
+    if not system_proxy:
+        return
+    proxyenv.install_user_proxy(system_proxy)
+    print()
+    print(f"[OK] обнаружен системный прокси {proxyenv.normalize_proxy_url(system_proxy)},")
+    print("     но Antigravity его не видит (читает только переменные окружения).")
+    print("     Прокси автоматически прописан в окружение пользователя.")
+    print(f"     Отмена: {shell_command(shell, 'proxy remove')}  (и перезапустите терминал/IDE)")
 
 
 def cmd_status(args: argparse.Namespace, settings: Settings, shell: str) -> int:
