@@ -73,7 +73,14 @@ def build_parser() -> argparse.ArgumentParser:
     proxy = sub.add_parser("proxy", help="прокси для agy: agy игнорирует системный прокси Windows")
     proxy_sub = proxy.add_subparsers(dest="proxy_command")
     proxy_sub.add_parser("status", help="показать все уровни прокси и вердикт")
-    proxy_sub.add_parser("install", help="прописать прокси в окружение пользователя (постоянно)")
+    install = proxy_sub.add_parser(
+        "install", help="прописать прокси в окружение пользователя (постоянно)"
+    )
+    install.add_argument(
+        "address",
+        nargs="?",
+        help="адрес HTTP/SOCKS-прокси, например http://127.0.0.1:10809",
+    )
     proxy_sub.add_parser("remove", help="убрать прокси из окружения пользователя")
     return parser
 
@@ -211,7 +218,7 @@ def cmd_patch(args: argparse.Namespace, settings: Settings, shell: str) -> int:
         print("\nНичего не найдено. Установите Antigravity или укажите пути в .env (см. .env.example).")
         return 2
     if not dry_run:
-        _auto_proxy_install(shell)
+        _auto_proxy_install(shell, settings)
     print()
     if dry_run:
         print("Это была репетиция (--dry-run). Для реального патча запустите:")
@@ -226,23 +233,23 @@ def cmd_patch(args: argparse.Namespace, settings: Settings, shell: str) -> int:
     return rc
 
 
-def _auto_proxy_install(shell: str) -> None:
-    """Патч снимает клиентский региональный гейт, но трафик до Google всё равно
-    должен идти через VPN-прокси: agy и language_server игнорируют системный
-    прокси Windows и читают только переменные окружения. Поэтому, если системный
-    прокси уже настроен, а переменные не прописаны ни в окружении, ни у
-    пользователя, прописываем их сами. Обратимо: 'proxy remove'.
+def _auto_proxy_install(shell: str, settings: Settings) -> None:
+    """Переносит явно заданный или системный прокси в окружение пользователя.
+
+    При TUN-VPN прокси может не быть вовсе: весь трафик уже идёт через VPN,
+    поэтому отсутствие адреса не является ошибкой и ничего не устанавливается.
     """
     if os.name != "nt":
         return
     if proxyenv.current_env_proxy() or proxyenv.user_env_proxy():
         return
-    system_proxy = proxyenv.read_system_proxy()
-    if not system_proxy:
+    source = settings.proxy or proxyenv.read_system_proxy()
+    if not source:
         return
-    proxyenv.install_user_proxy(system_proxy)
+    proxyenv.install_user_proxy(source)
+    origin = "AGY_PROXY" if settings.proxy else "системный прокси"
     print()
-    print(f"[OK] обнаружен системный прокси {proxyenv.normalize_proxy_url(system_proxy)},")
+    print(f"[OK] обнаружен {origin} {proxyenv.normalize_proxy_url(source)},")
     print("     но Antigravity его не видит (читает только переменные окружения).")
     print("     Прокси автоматически прописан в окружение пользователя.")
     print(f"     Отмена: {shell_command(shell, 'proxy remove')}  (и перезапустите терминал/IDE)")
@@ -323,6 +330,14 @@ def cmd_doctor(args: argparse.Namespace, settings: Settings, shell: str) -> int:
         if egress:
             print(f"    внешний IP: {egress}")
             print("    ожидается страна из поддерживаемых регионов (US/EU и т.п.) — иначе VPN обязателен")
+            if not (
+                proxyenv.current_env_proxy()
+                or proxyenv.user_env_proxy()
+                or proxyenv.read_system_proxy()
+            ):
+                print("    если страна выше поддерживается, отдельный прокси не нужен:")
+                print("         Antigravity будет использовать тот же сетевой выход (например, через TUN-VPN).")
+                print("         Команда 'proxy install' в этом случае не требуется.")
         else:
             print("    [??] не удалось определить внешний IP (сеть недоступна?)")
     return rc
@@ -336,11 +351,13 @@ def _print_proxy_state(shell: str) -> None:
     if os.name == "nt":
         print(f"    системный (WinINet): {sys_proxy or 'не задан'}")
         print(f"    окружение пользователя: {user_proxy or 'не задано'}")
-    verdict_needed = sys_proxy and not (env_proxy or user_proxy)
     if os.name == "nt" and sys_proxy and not user_proxy:
         print("    [!] agy игнорирует системный прокси и пойдёт напрямую -> 400 User location")
         print(f"        починка: {shell_command(shell, 'proxy install')}  (и перезапустите терминал/IDE)")
         print(f"        разовый запуск: {shell_command(shell, 'run -- agy ...')}")
+    elif not (env_proxy or sys_proxy or user_proxy):
+        print("    [--] HTTP/SOCKS-прокси не настроен. Для VPN в TUN-режиме это нормально.")
+        print(f"         проверка маршрута VPN: {shell_command(shell, 'doctor')}")
 
 
 def cmd_run(args: argparse.Namespace, settings: Settings, shell: str) -> int:
@@ -378,10 +395,21 @@ def cmd_proxy(args: argparse.Namespace, settings: Settings, shell: str) -> int:
         _print_proxy_state(shell)
         return 0
     if sub == "install":
-        source = settings.proxy or proxyenv.current_env_proxy() or proxyenv.read_system_proxy()
+        source = (
+            getattr(args, "address", None)
+            or settings.proxy
+            or proxyenv.current_env_proxy()
+            or proxyenv.user_env_proxy()
+            or proxyenv.read_system_proxy()
+        )
         if not source:
-            print("[ERR] прокси не обнаружен ни в окружении, ни в системных настройках.")
-            print("      Задайте его явно: AGY_PROXY=http://127.0.0.1:ПОРТ в .env")
+            print("[--] HTTP/SOCKS-прокси не обнаружен ни в окружении, ни в системных настройках.")
+            print("     Для VPN в TUN-режиме это нормально: прокси не нужен, ничего не установлено.")
+            print(f"     Проверьте внешний IP: {shell_command(shell, 'doctor')}")
+            print("     Если страна поддерживается Antigravity, запускайте IDE без 'proxy install'.")
+            print("     Если VPN предоставляет локальный прокси, укажите его адрес и порт:")
+            print(f"       {shell_command(shell, 'proxy install http://127.0.0.1:ПОРТ')}")
+            print("       либо задайте AGY_PROXY=http://127.0.0.1:ПОРТ в .env")
             return 1
         if os.name != "nt":
             print("добавьте в ~/.bashrc / ~/.zshrc строки:")

@@ -1,13 +1,15 @@
 """Юнит-тесты agy-unlocker (stdlib unittest, без внешних зависимостей)."""
 
+import io
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 from agy_unlocker import cli, detect, proxyenv
-from agy_unlocker.envcfg import _parse_dotenv
+from agy_unlocker.envcfg import Settings, _parse_dotenv
 from agy_unlocker.patchers import base, cli_bin, langserver
 
 
@@ -187,8 +189,18 @@ class AutoProxyInstallTests(unittest.TestCase):
                 mock.patch.object(cli.os, "name", "nt"), \
                 mock.patch.object(cli.proxyenv, "read_system_proxy", return_value="127.0.0.1:10809"), \
                 mock.patch.object(cli.proxyenv, "install_user_proxy") as install:
-            cli._auto_proxy_install("bash")
+            cli._auto_proxy_install("bash", Settings())
         install.assert_called_once_with("127.0.0.1:10809")
+
+    def test_installs_explicit_agy_proxy_without_system_proxy(self):
+        p_env, p_user = self._no_proxy_env()
+        settings = Settings(proxy="http://127.0.0.1:10810")
+        with p_env, p_user, \
+                mock.patch.object(cli.os, "name", "nt"), \
+                mock.patch.object(cli.proxyenv, "read_system_proxy", return_value=None), \
+                mock.patch.object(cli.proxyenv, "install_user_proxy") as install:
+            cli._auto_proxy_install("bash", settings)
+        install.assert_called_once_with("http://127.0.0.1:10810")
 
     def test_skips_when_env_or_user_proxy_exists(self):
         p_user = mock.patch.object(cli.proxyenv, "user_env_proxy", return_value=None)
@@ -197,7 +209,7 @@ class AutoProxyInstallTests(unittest.TestCase):
                 mock.patch.object(cli.proxyenv, "current_env_proxy", return_value="http://x:1"), \
                 mock.patch.object(cli.proxyenv, "read_system_proxy") as read, \
                 mock.patch.object(cli.proxyenv, "install_user_proxy") as install:
-            cli._auto_proxy_install("bash")
+            cli._auto_proxy_install("bash", Settings())
         install.assert_not_called()
         read.assert_not_called()
 
@@ -207,7 +219,7 @@ class AutoProxyInstallTests(unittest.TestCase):
                 mock.patch.object(cli.os, "name", "nt"), \
                 mock.patch.object(cli.proxyenv, "read_system_proxy") as read2, \
                 mock.patch.object(cli.proxyenv, "install_user_proxy") as install2:
-            cli._auto_proxy_install("bash")
+            cli._auto_proxy_install("bash", Settings())
         install2.assert_not_called()
         read2.assert_not_called()
 
@@ -217,13 +229,13 @@ class AutoProxyInstallTests(unittest.TestCase):
                 mock.patch.object(cli.os, "name", "nt"), \
                 mock.patch.object(cli.proxyenv, "read_system_proxy", return_value=None), \
                 mock.patch.object(cli.proxyenv, "install_user_proxy") as install:
-            cli._auto_proxy_install("bash")
+            cli._auto_proxy_install("bash", Settings())
         install.assert_not_called()
 
     def test_skips_on_posix(self):
         with mock.patch.object(cli.os, "name", "posix"), \
                 mock.patch.object(cli.proxyenv, "install_user_proxy") as install:
-            cli._auto_proxy_install("bash")
+            cli._auto_proxy_install("bash", Settings())
         install.assert_not_called()
 
     def test_patch_triggers_install(self):
@@ -259,6 +271,64 @@ class AutoProxyInstallTests(unittest.TestCase):
             install.assert_not_called()
             bak, _ = base.backup_paths(path)
             self.assertFalse(bak.exists())
+
+
+class ProxyCommandTests(unittest.TestCase):
+    def test_install_without_proxy_explains_tun(self):
+        output = io.StringIO()
+        with mock.patch.object(cli, "load_settings", return_value=Settings()), \
+                mock.patch.object(cli.os, "name", "nt"), \
+                mock.patch.object(cli.proxyenv, "current_env_proxy", return_value=None), \
+                mock.patch.object(cli.proxyenv, "user_env_proxy", return_value=None), \
+                mock.patch.object(cli.proxyenv, "read_system_proxy", return_value=None), \
+                mock.patch.object(cli.proxyenv, "install_user_proxy") as install, \
+                redirect_stdout(output):
+            rc = cli.main(["--shell", "cmd", "proxy", "install"])
+        self.assertEqual(rc, 1)
+        install.assert_not_called()
+        self.assertIn("Для VPN в TUN-режиме это нормально", output.getvalue())
+        self.assertIn("proxy install http://127.0.0.1:ПОРТ", output.getvalue())
+
+    def test_install_accepts_explicit_address(self):
+        output = io.StringIO()
+        with mock.patch.object(cli, "load_settings", return_value=Settings()), \
+                mock.patch.object(cli.os, "name", "nt"), \
+                mock.patch.object(cli.proxyenv, "install_user_proxy") as install, \
+                redirect_stdout(output):
+            rc = cli.main([
+                "--shell", "cmd", "proxy", "install", "http://127.0.0.1:10809",
+            ])
+        self.assertEqual(rc, 0)
+        install.assert_called_once_with("http://127.0.0.1:10809")
+
+    def test_install_uses_persisted_user_proxy(self):
+        output = io.StringIO()
+        with mock.patch.object(cli, "load_settings", return_value=Settings()), \
+                mock.patch.object(cli.os, "name", "nt"), \
+                mock.patch.object(cli.proxyenv, "current_env_proxy", return_value=None), \
+                mock.patch.object(cli.proxyenv, "user_env_proxy", return_value="http://127.0.0.1:10809"), \
+                mock.patch.object(cli.proxyenv, "read_system_proxy") as read_system, \
+                mock.patch.object(cli.proxyenv, "install_user_proxy") as install, \
+                redirect_stdout(output):
+            rc = cli.main(["--shell", "cmd", "proxy", "install"])
+        self.assertEqual(rc, 0)
+        read_system.assert_not_called()
+        install.assert_called_once_with("http://127.0.0.1:10809")
+
+    def test_doctor_accepts_tun_without_proxy(self):
+        output = io.StringIO()
+        args = cli.build_parser().parse_args(["doctor"])
+        with mock.patch.object(cli, "cmd_status", return_value=0), \
+                mock.patch.object(cli.os, "name", "nt"), \
+                mock.patch.object(cli, "_egress_info", return_value="217.217.110.29 (AT)"), \
+                mock.patch.object(cli.proxyenv, "current_env_proxy", return_value=None), \
+                mock.patch.object(cli.proxyenv, "user_env_proxy", return_value=None), \
+                mock.patch.object(cli.proxyenv, "read_system_proxy", return_value=None), \
+                redirect_stdout(output):
+            rc = cli.cmd_doctor(args, Settings(), "cmd")
+        self.assertEqual(rc, 0)
+        self.assertIn("Для VPN в TUN-режиме это нормально", output.getvalue())
+        self.assertIn("Команда 'proxy install' в этом случае не требуется", output.getvalue())
 
 
 class NormalizeShimTests(unittest.TestCase):
